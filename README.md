@@ -344,7 +344,28 @@ Inserts are generally supported natively and reasonably efficient (HNSW was desi
 
 **Tool calling in practice**: model output is constrained to a schema (usually JSON) matching a function signature; your application code validates and executes it, then returns the result as a new message in the conversation for the model to continue reasoning with. Reliability tips interviewers may probe: schema validation, retries on malformed calls, timeouts, and never letting the model execute destructive actions without a check.
 
-**Key challenges**: error compounding across multi-step loops, infinite loops/lack of termination, cost (many LLM calls per task), reliability of tool-call formatting, evaluating agent trajectories (not just final output).
+### MCP (Model Context Protocol) and A2A (Agent2Agent) — the two interoperability protocols
+
+These come up increasingly in agentic-AI interviews because they solve the "every integration is custom code" problem at two different layers. Know the one-line distinction cold: **MCP = agent-to-tool/data. A2A = agent-to-agent.**
+
+**MCP (Model Context Protocol)** — introduced by Anthropic (Nov 2024), now widely adopted industry-wide:
+- **Problem it solves**: before MCP, every AI app needed bespoke integration code for every tool/data source it wanted to use (an "N×M" integration problem — N apps × M tools = N×M custom integrations). MCP standardizes the interface so one MCP server implementation works with *any* MCP-compatible client.
+- **Architecture**: client-server model. An **MCP server** exposes capabilities from a specific tool/data source (e.g., a GitHub server, a Slack server, a database server). An **MCP client** (embedded in an AI app — Claude, an IDE, a custom agent) connects to one or more servers and lets the LLM use their capabilities.
+- **Three core primitives** a server can expose: **Tools** (functions the model can call — "search issues," "create a ticket"), **Resources** (readable data the model can pull in as context — files, DB rows), **Prompts** (reusable prompt templates the server provides).
+- **Transport**: JSON-RPC 2.0 messages, over either **stdio** (for local servers running as a subprocess) or **HTTP/SSE** (for remote servers).
+- **Common analogy** (safe to use in an interview): "USB-C for AI applications" — one standard connector instead of a different cable for every device.
+
+**A2A (Agent2Agent Protocol)** — announced by Google (April 2025), contributed to the **Linux Foundation** for vendor-neutral governance shortly after, with broad industry backing (Microsoft, AWS, Salesforce, SAP, and others have adopted/integrated it):
+- **Problem it solves**: MCP connects *one* agent to tools/data — it doesn't define how two independent *agents* (potentially built on completely different frameworks/vendors) discover each other, negotiate what they can do, and delegate work. A2A is that layer.
+- **Core mechanics**: 
+  - **Agent Cards**: a JSON manifest an agent publishes describing its capabilities/skills/endpoint — how a client agent discovers *what a remote agent can do* before delegating to it (conceptually similar to an API spec or service-discovery document).
+  - **Task lifecycle**: a client agent sends a task to a remote agent, which moves through defined states (submitted → working → input-required → completed/failed/canceled) — this explicit lifecycle is what lets a client track and manage a long-running delegated task rather than treating it as a single blocking call.
+  - **Transport**: built on existing standards rather than inventing new ones — HTTP, Server-Sent Events (for streaming task updates), and JSON-RPC 2.0, with OAuth 2.0 for agent-to-agent authentication.
+- **Why it's a separate layer from MCP, not a competitor**: MCP answers "how does an agent use a tool/data source"; A2A answers "how does an agent find and delegate to *another agent*" — a full agentic system in production often uses both together (each agent uses MCP for its own tools, and A2A to hand off tasks to peer agents).
+
+**Practical interview framing**: if asked "how would two agents built on different frameworks collaborate," the strong answer is A2A (Agent Cards for discovery + task delegation), not "just have them call each other's APIs directly" — the point of A2A is avoiding custom point-to-point integration between every pair of agents, the same problem MCP solved for agent-to-tool integration.
+
+**Key challenges**: error compounding across multi-step loops, infinite loops/lack of termination, cost (many LLM calls per task), reliability of tool-call formatting, evaluating agent trajectories (not just final output). For A2A/multi-agent specifically: trust/security across organizational boundaries (are you willing to let another company's agent execute tasks in your system?), and the protocol layer being new enough (2025-2026) that production track record is still thinner than the marketing suggests — worth acknowledging that maturity caveat if asked how production-ready it is.
 
 ---
 
@@ -522,6 +543,10 @@ These "design a chatbot for X" questions are really testing whether you reach fo
 | What is Product Quantization for? | Compresses stored vectors into small codes to cut memory footprint at huge scale, at some accuracy cost — often paired with IVF as IVF-PQ. |
 | Pre-filtering vs post-filtering metadata in vector search? | Pre-filter restricts the search space before ANN search (more accurate, needs index support); post-filter runs ANN first then discards non-matches (simpler, can return fewer than top-k). |
 | FAISS vs a full vector database? | FAISS is just an ANN indexing/search library (no persistence/API/scaling); a vector DB wraps ANN indexing with storage, CRUD, filtering, sharding, and replication. |
+| MCP vs A2A in one line? | MCP = standardizes agent-to-tool/data connections; A2A = standardizes agent-to-agent discovery and task delegation. Different layers, used together. |
+| What problem does MCP actually solve? | The N×M integration problem — without it, every AI app needs custom code for every tool; MCP makes one server work with any compatible client. |
+| What are Agent Cards in A2A? | A JSON manifest a remote agent publishes describing its capabilities — how a client agent discovers what it can delegate before sending it a task. |
+| Why not just have two agents call each other's REST APIs directly instead of A2A? | Works ad hoc, but doesn't scale — every new agent pair needs custom integration; A2A standardizes discovery (Agent Cards) and task lifecycle so any compliant agents interoperate without bespoke glue. |
 
 ---
 
