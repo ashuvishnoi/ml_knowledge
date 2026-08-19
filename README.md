@@ -344,6 +344,35 @@ Inserts are generally supported natively and reasonably efficient (HNSW was desi
 
 **Tool calling in practice**: model output is constrained to a schema (usually JSON) matching a function signature; your application code validates and executes it, then returns the result as a new message in the conversation for the model to continue reasoning with. Reliability tips interviewers may probe: schema validation, retries on malformed calls, timeouts, and never letting the model execute destructive actions without a check.
 
+### Practical real-world agentic AI use cases
+
+Interviewers like this list because it tests whether you can map the abstract concepts (multi-agent, tool calling, RAG, memory) onto something a business actually deploys. For each, notice the same shape: **specialized agents + tool calls into real systems + a guardrail/approval gate before anything risky**.
+
+**1. Multi-agent customer support chatbot** (retail/SaaS): an **intent/triage agent** classifies the incoming query (billing, technical, sales, complaint) and routes it rather than one generic agent trying to handle everything. **Specialist agents** per category each get narrower, better-tuned prompts/tools than a do-everything agent would — e.g., a billing agent with tool access to the payments system, a technical agent with RAG over product docs. An **escalation agent** watches for frustration signals or repeated failed resolution attempts and hands off to a human with full conversation context — the key design question interviewers probe here is *how does the bot know when to stop trying?* Why multi-agent over one big agent with many tools: narrower specialist agents are easier to evaluate, tune, and guardrail independently, and failures are easier to attribute (was it the router, or the billing agent?) than debugging one monolithic prompt.
+
+**2. AIOps / IT incident management** — the flagship agentic use case, worth knowing in real depth. The core problem: an incident generates a *flood* of signals (alerts, thousands of log lines, correlated metric spikes across microservices) far faster than a human can absorb, and you can't just hand an LLM the raw firehose — it'll blow the context window and drown in noise. That's exactly why this becomes a multi-agent pipeline rather than one big prompt:
+- **Detection/noise-reduction** (usually *not* LLM-based): statistical/ML anomaly detection on metrics, log clustering/deduplication so 10,000 log lines become "50 distinct patterns with counts" — this stage's entire job is shrinking signal before anything reaches an LLM.
+- **Correlation/triage agent**: takes the deduplicated alerts + a service dependency graph, identifies which alerts are likely symptoms of the *same* root cause ("these 8 alerts across payment-service and auth-service all started 90 seconds after the same deployment") — fuzzy cross-service pattern-matching is exactly where an LLM beats static alerting rules.
+- **Diagnosis agent (RAG-grounded)**: retrieves from past incident postmortems/runbooks — "same signature as incident #4821, root cause was connection-pool exhaustion after that auth-service deploy" — grounding the hypothesis in real historical incidents, not the model's general knowledge.
+- **Remediation agent (tool-calling, gated)**: proposes, or for well-understood low-risk fixes actually *executes*, a remediation (restart a pod, roll back a deploy, scale up) via tool calls into the orchestration platform — but anything destructive/high-blast-radius goes through a human **approval gate** rather than full autonomy. This human-in-the-loop boundary is exactly the design judgment interviewers are checking for.
+- **Communication agent**: drafts the incident summary and keeps the ticket/status page/Slack channel updated in real time — grounded strictly in what the other agents actually found, no speculative root-cause claims before diagnosis confidence is established.
+- **Orchestration pattern**: typically **hierarchical** — an "incident commander" agent routes between the specialist agents above, tracks overall incident state, and decides when to escalate to a human.
+- **Feedback loop**: once resolved, the postmortem (root cause + fix) feeds back into the runbook knowledge base, so the diagnosis agent's RAG layer improves over time — this closing-the-loop detail is often what separates a "toy demo" answer from one that shows you understand this needs to be a continuously-improving system, not a static pipeline.
+
+**3. DevOps/CI copilot**: an agent reviews a PR diff, runs static analysis/tests via tool calls, and comments with suggested fixes; a separate monitoring agent watches post-deploy health metrics and can trigger an automatic rollback if error rates spike beyond a threshold — again, auto-rollback is a case where limited, well-scoped autonomy (a clearly reversible action) is more acceptable than autonomous forward changes.
+
+**4. SOC (Security Operations Center) agent**: same shape as AIOps but security-focused — triage agent correlates alerts against threat intel to separate real threats from false positives, drafts a response plan, and escalates anything above a severity threshold to a human analyst rather than acting autonomously (blocking IPs, disabling accounts, etc. are exactly the "requires approval" actions).
+
+**5. Sales/CRM outreach agent**: researches a prospect (web search + CRM history via tool calls), drafts a personalized outreach message, and updates the CRM record — a good example of an agent whose entire value is chaining several tool calls (search, CRM read, calendar, email draft) rather than needing heavy reasoning.
+
+**6. Financial reconciliation agent**: pulls transactions from multiple systems (ERP, bank feeds), flags mismatches, and drafts an explanation for each discrepancy — routes anything above a materiality threshold to a human for sign-off. Compliance-heavy domains like this are where the "guardrails + audit trail of every agent action" point matters most in an interview answer.
+
+**7. Multi-agent research/report generation**: a **planner agent** breaks a broad question into sub-questions; multiple **retrieval/summarization agents** work sub-questions in parallel; a **synthesis agent** compiles the final report; a **critic agent** checks the draft for unsupported claims/hallucinated citations before it goes out — this is the pattern behind "deep research" style products.
+
+**8. Coding agents** (e.g., Claude Code-style): planner, coder, and test-runner sub-steps collaborate on implementing a feature — write code, run tests, read failures, iterate — a good concrete example of the ReAct loop (Thought → Action → Observation) running for many turns on a single complex task.
+
+**The pattern underneath almost all of these** (good to say out loud in an interview to show you see the common thread, not just a list of demos): specialize agents by task, reduce/ground signal before it hits an LLM (don't dump raw logs/data at the model), retrieve from real historical/organizational knowledge rather than relying on the model's general knowledge, gate risky actions behind human approval, and close the feedback loop so the system improves from what it handles.
+
 ### MCP (Model Context Protocol) and A2A (Agent2Agent) — the two interoperability protocols
 
 These come up increasingly in agentic-AI interviews because they solve the "every integration is custom code" problem at two different layers. Know the one-line distinction cold: **MCP = agent-to-tool/data. A2A = agent-to-agent.**
@@ -547,6 +576,9 @@ These "design a chatbot for X" questions are really testing whether you reach fo
 | What problem does MCP actually solve? | The N×M integration problem — without it, every AI app needs custom code for every tool; MCP makes one server work with any compatible client. |
 | What are Agent Cards in A2A? | A JSON manifest a remote agent publishes describing its capabilities — how a client agent discovers what it can delegate before sending it a task. |
 | Why not just have two agents call each other's REST APIs directly instead of A2A? | Works ad hoc, but doesn't scale — every new agent pair needs custom integration; A2A standardizes discovery (Agent Cards) and task lifecycle so any compliant agents interoperate without bespoke glue. |
+| Why is AIOps incident response usually multi-agent instead of one LLM call? | Raw alerts/logs are too voluminous and noisy for one prompt — you need a dedup/clustering stage before an LLM even sees the signal, then separate correlation, diagnosis, and remediation stages. |
+| How do you stop an AIOps agent from taking a dangerous action automatically? | Gate high-blast-radius actions (restarts, rollbacks, scaling) behind human approval; only let well-established, low-risk fixes execute autonomously. |
+| Why specialize agents by task in a support chatbot instead of one agent with all tools? | Narrower agents are easier to evaluate, tune, and guardrail independently, and failures are easier to attribute to a specific stage. |
 
 ---
 
